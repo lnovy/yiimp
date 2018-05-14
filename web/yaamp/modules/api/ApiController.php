@@ -233,7 +233,7 @@ class ApiController extends CommonController
 			header('HTTP/1.0 503 Disabled, server overloaded');
 			return;
 		}
-		if(!LimitRequest('api-wallet', 60)) {
+		if(!LimitRequest('api-wallet', 3) || !LimitRequest('api-wallet-'.$wallet, 60) {
 			return;
 		}
 

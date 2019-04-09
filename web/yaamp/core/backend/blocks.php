@@ -5,17 +5,30 @@ function BackendBlockNew($coin, $db_block)
 //	debuglog("NEW BLOCK $coin->name $db_block->height");
 	$reward = $db_block->amount;
 	if(!$reward || $db_block->algo == 'PoS' || $db_block->algo == 'MN') return;
-	if($db_block->category == 'stake' || $db_block->category == 'generated') return;
+	if($db_block->category == 'stake' || $db_block->category == 'generated') return;= 
 
 	$sqlCond = "valid = 1";
-	if(!YAAMP_ALLOW_EXCHANGE) // only one coin mined
-		$sqlCond .= " AND coinid = ".intval($coin->id);
+//	if(!YAAMP_ALLOW_EXCHANGE) // only one coin mined
+//		$sqlCond .= " AND coinid = ".intval($coin->id);
+//
+//      zpool zap™ mode
+//
 
+	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=1";
+	$sqlCondRest =  $sqlCond . " AND zap=0";
+	
+	// phase one, split threward
 	$total_hash_power = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCond AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$total_hash_power) return;
-
-	$list = dbolist("SELECT userid, SUM(difficulty) AS total FROM shares WHERE $sqlCond AND algo=:algo GROUP BY userid",
-			array(':algo'=>$coin->algo));
+	$hash_power_zappers = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondZappers AND algo=:algo", array(':algo'=>$coin->algo));
+	if(!$hash_power_zappers) return;
+	$hash_power_rest = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondRest AND algo=:algo", array(':algo'=>$coin->algo));
+	if(!$hash_power_rest) return;
+	
+	// one can also be partly zapper and partly nonzapper, so don't try to get rid of the UNION plz...
+	$list = dbolist("SELECT userid, SUM(difficulty) AS total, 1 AS zap FROM shares WHERE $sqlCondZappers AND algo=:algo GROUP BY userid" 
+		     . " UNION ALL SELECT userid, SUM(difficulty) AS total, 0 AS zap FROM shares WHERE $sqlCondRest AND algo=:algo2 GROUP BY userid",
+			array(':algo'=>$coin->algo, ':algo2'=>$coin->algo));
 
 	foreach($list as $item)
 	{
@@ -25,7 +38,7 @@ function BackendBlockNew($coin, $db_block)
 		$user = getdbo('db_accounts', $item['userid']);
 		if(!$user) continue;
 
-		$amount = $reward * $hash_power / $total_hash_power;
+		$amount = $reward * $hash_power / ($item['zap']?$total_hash_zappers:$hash_power_rest);
 		if(!$user->no_fees) $amount = take_yaamp_fee($amount, $coin->algo);
 		if(!empty($user->donation)) {
 			$amount = take_yaamp_fee($amount, $coin->algo, $user->donation);
@@ -63,17 +76,23 @@ function BackendBlockNew($coin, $db_block)
 
 	$delay = time() - 5*60;
 	$sqlCond = "time < $delay";
-	if(!YAAMP_ALLOW_EXCHANGE) // only one coin mined
-		$sqlCond .= " AND coinid = ".intval($coin->id);
+	
+//	if(!YAAMP_ALLOW_EXCHANGE) // only one coin mined
+//	$sqlCond .= " AND coinid = ".intval($coin->id);
+//
+//      zpool zap™ mode
+
+	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=1";
+	$sqlCondRest =  $sqlCond . " AND zap=0";
 
 	try {
-		dborun("DELETE FROM shares WHERE algo=:algo AND $sqlCond", array(':algo'=>$coin->algo));
+		dborun("DELETE FROM shares WHERE algo=:algo AND ($sqlCondZappers OR $sqlCondRest)", array(':algo'=>$coin->algo));
 
 	} catch (CDbException $e) {
 
 		debuglog("unable to delete shares $sqlCond retrying...");
 		sleep(1);
-		dborun("DELETE FROM shares WHERE algo=:algo AND $sqlCond", array(':algo'=>$coin->algo));
+		dborun("DELETE FROM shares WHERE algo=:algo AND ($sqlCondZappers OR $sqlCondRest)", array(':algo'=>$coin->algo));
 		// [errorInfo] => array(0 => 'HY000', 1 => 1205, 2 => 'Lock wait timeout exceeded; try restarting transaction')
 		// [*:message] => 'CDbCommand failed to execute the SQL statement: SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded; try restarting transaction'
 	}

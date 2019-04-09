@@ -15,13 +15,15 @@ function BackendBlockNew($coin, $db_block)
 //
 
 	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=1";
+	$sqlCondNonZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=0";
 	$sqlCondRest =  $sqlCond . " AND zap=0";
 	
-	// phase one, split threward
-	$total_hash_power = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCond AND algo=:algo", array(':algo'=>$coin->algo));
-	if(!$total_hash_power) return;
+	// phase one
 	$hash_power_zappers = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondZappers AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$hash_power_zappers) return;
+	$hash_power_nonzappers = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondNonZappers AND algo=:algo", array(':algo'=>$coin->algo));
+	if(!$hash_power_nonzappers) return;
+        // phase two
 	$hash_power_rest = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondRest AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$hash_power_rest) return;
 	
@@ -38,7 +40,7 @@ function BackendBlockNew($coin, $db_block)
 		$user = getdbo('db_accounts', $item['userid']);
 		if(!$user) continue;
 
-		$amount = $reward * $hash_power / ($item['zap']?$total_hash_zappers:$hash_power_rest);
+		$amount = $reward * (($item['zap']?$hash_power_zappers:$hash_power_nonzappers)/$hash_power_zappers+$hash_power_nonzappers) * $hash_power / ($item['zap']?$hash_power_zappers?$hash_power_rest?;
 		if(!$user->no_fees) $amount = take_yaamp_fee($amount, $coin->algo);
 		if(!empty($user->donation)) {
 			$amount = take_yaamp_fee($amount, $coin->algo, $user->donation);

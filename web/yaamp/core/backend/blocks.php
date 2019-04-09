@@ -14,16 +14,21 @@ function BackendBlockNew($coin, $db_block)
 //      zpool zap™ mode
 //
 
-	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=1";
-	$sqlCondNonZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=0";
-	$sqlCondRest =  $sqlCond . " AND zap=0";
-	
-	// phase one
+	// those next two filter over the coin only
+
+	// shares with zap=
+	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND COALESCE(zap)=1";
 	$hash_power_zappers = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondZappers AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$hash_power_zappers) return;
+	
+	// shares without zap
+	$sqlCondNonZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND COALESCE(zap)=0";
+	
 	$hash_power_nonzappers = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondNonZappers AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$hash_power_nonzappers) return;
-        // phase two
+	
+	// this filters over the whole algo but only shares from non-zappers
+	$sqlCondRest =  $sqlCond . " AND COALESCE(zap,0)=0";
 	$hash_power_rest = dboscalar("SELECT SUM(difficulty) FROM shares WHERE $sqlCondRest AND algo=:algo", array(':algo'=>$coin->algo));
 	if(!$hash_power_rest) return;
 	
@@ -40,7 +45,13 @@ function BackendBlockNew($coin, $db_block)
 		$user = getdbo('db_accounts', $item['userid']);
 		if(!$user) continue;
 
-		$amount = $reward * (($item['zap']?$hash_power_zappers:$hash_power_nonzappers)/$hash_power_zappers+$hash_power_nonzappers) * $hash_power / ($item['zap']?$hash_power_zappers?$hash_power_rest?;
+		// first split the block reward between zappers and nonzappers... using shares in the coin only
+		$reward_split = $reward * (($item['zap']?$hash_power_zappers:$hash_power_nonzappers)/($hash_power_zappers+$hash_power_nonzappers));
+
+		// than allocate the reward
+		// zappers their part by power over all zapped shares 
+		// nonzappers are allocated from their part by power over non-zapped shares of the whole algo 
+		$amount = $reward_split * $hash_power / ($item['zap']?$hash_power_zappers:$hash_power_rest);
 		if(!$user->no_fees) $amount = take_yaamp_fee($amount, $coin->algo);
 		if(!empty($user->donation)) {
 			$amount = take_yaamp_fee($amount, $coin->algo, $user->donation);
@@ -84,8 +95,11 @@ function BackendBlockNew($coin, $db_block)
 //
 //      zpool zap™ mode
 
-	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND zap=1";
-	$sqlCondRest =  $sqlCond . " AND zap=0";
+
+	// for zappers we clear only shares for this coin
+	$sqlCondZappers = $sqlCond . "  AND coinid = ".intval($coin->id) . " AND COALESCE(zap,0)=1";
+	// others have all their non-zapped shares cleared
+	$sqlCondRest =  $sqlCond . " AND COALESCE(zap,0)=0";
 
 	try {
 		dborun("DELETE FROM shares WHERE algo=:algo AND ($sqlCondZappers OR $sqlCondRest)", array(':algo'=>$coin->algo));
